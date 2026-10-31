@@ -1,0 +1,39 @@
+name: USD News Alert
+
+on:
+  schedule:
+    # كل 6 ساعات — كل تشغيل يظل شغال ~5 ساعات و40 دقيقة
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usd-news-alert
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore seen-state
+        uses: actions/cache@v4
+        with:
+          path: seen.json
+          key: news-seen-${{ github.run_id }}
+          restore-keys: |
+            news-seen-
+
+      - name: Watch calendar
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python news_alert.py --duration 20400
