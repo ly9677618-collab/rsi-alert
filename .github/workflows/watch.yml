@@ -1,7 +1,12 @@
 name: Watch
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "مدة التشغيل بالثواني"
+        required: false
+        default: "20400"
   schedule:
     # احتياطي فقط — التشغيل الفعلي يشنّط نفسه (GitHub cron غير موثوق)
     - cron: "0 */6 * * *"
@@ -38,4 +43,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python watch.py --duration 20400
+        run: python watch.py --duration ${{ github.event.inputs.duration || '20400' }}
