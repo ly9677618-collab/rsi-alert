@@ -30,3 +30,4 @@ python news_alert.py --duration 43200
 - GitHub قد يتأخر 5–15 دقيقة عن وقت الجدولة، وفيه فجوة ~10 دقائق بين كل تشغيلين للنيوز.
 - بعد ~60 يوم خمول توقف GitHub الجدولة: Actions → Run workflow.
 - كل الأرقام محسوبة على شموع مقفلة (Wildin RSI-14) وبيانات TradingView لحظية.
+<!-- keep-alive: 2026-10-31 20:07 -->
