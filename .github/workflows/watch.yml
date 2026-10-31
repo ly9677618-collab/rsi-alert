@@ -1,0 +1,41 @@
+name: Watch
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # احتياطي فقط — التشغيل الفعلي يشنّط نفسه (GitHub cron غير موثوق)
+    - cron: "0 */6 * * *"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore seen-state
+        uses: actions/cache@v4
+        with:
+          path: seen.json
+          key: seen-${{ github.run_id }}
+          restore-keys: |
+            seen-
+
+      - name: Watch (news + RSI)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python watch.py --duration 20400
