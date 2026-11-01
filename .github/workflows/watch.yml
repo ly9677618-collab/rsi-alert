@@ -8,16 +8,12 @@ on:
         required: false
         default: "20400"
   schedule:
-    # احتياطي فقط — التشغيل الفعلي يشنّط نفسه (GitHub cron غير موثوق)
+    # احتياطي — التسليم الفعلي يصير من داخل التشغيل نفسه
     - cron: "0 */6 * * *"
 
 permissions:
   contents: read
   actions: write
-
-concurrency:
-  group: watch
-  cancel-in-progress: false
 
 jobs:
   run:
