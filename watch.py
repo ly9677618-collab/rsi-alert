@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Continuous watcher:
+Continuous watcher (24/7 via self-handoff):
   - polls USD high-impact news every 12s  (TradingView)
-  - runs the RSI scan at every hour boundary (1h) and at 4h boundaries
-  - at the end of its life it dispatches the next run of this same workflow
-    (GitHub Actions cron is unreliable, so the job re-arms itself)
+  - runs the RSI scan at each hour boundary (:00:30) and 4h boundaries
+  - dispatches the next run of this workflow shortly before it ends
+  - waits for any OLDER still-running instance first, so two instances
+    never poll at the same time (no duplicate alerts, no gaps)
 
-Env: TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GH_TOKEN (github.token), GITHUB_REPOSITORY
+Env: TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_ID
 """
 
 import json
@@ -24,8 +25,47 @@ sys.path.insert(0, HERE)
 import news_alert as N  # noqa: E402
 import rsi_alert as R   # noqa: E402
 
-TZ = dt.timezone(dt.timedelta(hours=3))
 UTC = dt.timezone.utc
+
+
+def _api(method, url, body=None):
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("no token")
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "watch-bot",
+    })
+    with urllib.request.urlopen(req, timeout=25) as r:
+        raw = r.read().decode() or "{}"
+        return r.status, json.loads(raw)
+
+
+def wait_for_older_instance(max_wait=1500):
+    """Do not poll while a run that started before us is still alive."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    try:
+        my_id = int(os.environ.get("GITHUB_RUN_ID") or 0)
+    except ValueError:
+        my_id = 0
+    if not repo or not my_id:
+        return
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        try:
+            _, data = _api("GET", f"https://api.github.com/repos/{repo}/actions/runs"
+                                  "?status=in_progress&per_page=30")
+        except Exception as e:  # noqa: BLE001
+            print("run lookup failed:", repr(e), flush=True)
+            return
+        older = [r["id"] for r in data.get("workflow_runs", []) if r["id"] < my_id]
+        if not older:
+            return
+        print(f"waiting for older instance(s): {older}", flush=True)
+        time.sleep(10)
 
 
 def env_cfg():
@@ -33,8 +73,6 @@ def env_cfg():
         "token": os.environ.get("TELEGRAM_TOKEN"),
         "chat_id": os.environ.get("TELEGRAM_CHAT_ID"),
         "rsi_period": 14,
-        "history_1h": 200,
-        "history_4h": 300,
         "workers": 8,
         "send_when_empty": True,
     }
@@ -58,12 +96,10 @@ def run_rsi(cfg, tf):
 
 
 def rsi_thread(cfg, stop_at):
-    """Wait for each hour boundary (:00:30) then scan."""
-    time.sleep(20)  # let the news thread settle
+    time.sleep(15)
     while time.time() < stop_at:
         now = dt.datetime.now(UTC)
-        nxt = (now.replace(minute=0, second=0, microsecond=0)
-               + dt.timedelta(hours=1, seconds=30))
+        nxt = now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=1, seconds=30)
         while time.time() < nxt.timestamp() and time.time() < stop_at:
             time.sleep(5)
         if time.time() >= stop_at:
@@ -78,27 +114,17 @@ def rsi_thread(cfg, stop_at):
 
 
 def dispatch_next(reason):
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     repo = os.environ.get("GITHUB_REPOSITORY")
     wf = os.environ.get("WORKFLOW_FILE", "watch.yml")
     ref = os.environ.get("GITHUB_REF_NAME", "main")
-    if not token or not repo:
-        print("dispatch skipped (no token/repo)", flush=True)
+    if not repo:
+        print("dispatch skipped (no repo)", flush=True)
         return False
-    url = f"https://api.github.com/repos/{repo}/actions/workflows/{wf}/dispatches"
-    body = json.dumps({"ref": ref}).encode()
-    req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "User-Agent": "watch-bot",
-        })
     try:
-        with urllib.request.urlopen(req, timeout=25) as r:
-            print(f"dispatch next: {r.status} ({reason})", flush=True)
-            return True
+        status, _ = _api("POST", f"https://api.github.com/repos/{repo}/actions/workflows/{wf}/dispatches",
+                         {"ref": ref})
+        print(f"dispatch next: {status} ({reason})", flush=True)
+        return True
     except Exception as e:  # noqa: BLE001
         print("dispatch failed:", repr(e), flush=True)
         return False
@@ -110,7 +136,9 @@ def main():
         if a == "--duration" and i + 1 < len(sys.argv):
             duration = int(sys.argv[i + 1])
     if duration <= 0:
-        duration = 20400  # 5h40m
+        duration = 20400
+
+    wait_for_older_instance()
 
     cfg = env_cfg()
     started = time.time()
@@ -118,10 +146,8 @@ def main():
     print(f"watch start duration={duration}s", flush=True)
 
     seen = N.load_seen()
-    t = threading.Thread(target=rsi_thread, args=(cfg, stop_at), daemon=True)
-    t.start()
+    threading.Thread(target=rsi_thread, args=(cfg, stop_at), daemon=True).start()
 
-    # dispatch the successor a bit before we die, so there is no gap
     handoff_at = stop_at - 90
     handed = False
 
