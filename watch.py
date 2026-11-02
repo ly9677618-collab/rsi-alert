@@ -44,7 +44,7 @@ def _api(method, url, body=None):
         return r.status, json.loads(raw)
 
 
-def wait_for_older_instance(max_wait=1500):
+def wait_for_older_instance(max_wait=480):
     """Do not poll while a run that started before us is still alive."""
     repo = os.environ.get("GITHUB_REPOSITORY")
     try:
@@ -136,7 +136,7 @@ def main():
         if a == "--duration" and i + 1 < len(sys.argv):
             duration = int(sys.argv[i + 1])
     if duration <= 0:
-        duration = 20400
+        duration = 19800
 
     wait_for_older_instance()
 
